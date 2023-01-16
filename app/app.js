@@ -2,7 +2,7 @@ const cors = require('cors');
 const express = require('express');
 const mysql = require('mysql2');
 const bcrypt = require('bcrypt');
-const e = require('cors');
+const jwt = require('jsonwebtoken')
 
 require('dotenv').config();
 
@@ -28,23 +28,44 @@ const connection = mysql.createConnection(mysqlConfig);
 //     });
 // });
 
-app.get('/expenses', (req, res) => {
-    const { userId } = req.query;
-    connection.execute('SELECT * FROM expenses WHERE userId=?', [userId], (err, expenses) => {
+const getUserFromToken = (req) => {
+    const token = req.headers.authorization.split(' ')[1];
+    const user = jwt.verify(token, process.env.JWT_SECRET_KEY);
+    return user;
+}
+
+
+const verifyToken = (req, res, next) => {
+    try {
+        // const token = req.headers.authorization.split(' ')[1]; /// per headers ateina info splitinam per trapa 1as array bearer[0] 2as tokentas[1]
+        // jwt.verify(token, process.env.JWT_SECRET_KEY); // paduodam tokena ir processjwtslaptakoda patvirtinumum
+        getUserFromToken(req);
+        next();
+    } catch(e) {
+        res.send(401)({ error: 'Invalid Token'});
+    }
+}
+
+
+app.get('/expenses', verifyToken, (req, res) => { /// iskvieciam verifyToken jei tokenas validus veiksmas vyksta toliau
+    const user = getUserFromToken(req);
+
+    connection.execute('SELECT * FROM expenses WHERE userId=?', [user.id], (err, expenses) => {
         res.send(expenses);
     });
 });
 
-app.post('/expenses', (req, res) => {
-    const { type, amount, userId } = req.body;
+app.post('/expenses', verifyToken, (req, res) => {
+    const { type, amount } = req.body;
+    const { id } = getUserFromToken(req);
 
     connection.execute(
         'INSERT INTO expenses (type, amount, userId) VALUES (?, ?, ?)',
-        [type, amount, userId],
+        [type, amount, id],
         () => {
             connection.execute(
                 'SELECT * FROM expenses WHERE userId=?', 
-                [userId], 
+                [id], 
                 (err, expenses) => {
                     res.send(expenses);
                 }
@@ -83,13 +104,25 @@ app.post('/login', (req, res) => {
                 const passwordHash = result[0].password
                 const isPasswordCorrect = bcrypt.compareSync(password, passwordHash);
                 if (isPasswordCorrect) {
-                    res.send(result[0]);
+                    const { id, name } = result[0];
+                    const token = jwt.sign({ id, name }, process.env.JWT_SECRET_KEY);
+                    res.send({ token, id, name});
                 } else {
                     res.sendStatus(401);
                 }
             }
         }
     );
+});
+
+app.get('/token/verify', (req, res) => {
+    try {
+        const token = req.headers.authorization.split(' ')[1];
+        const user = jwt.verify(token, process.env.JWT_SECRET_KEY);
+        res.send(user);
+    } catch(e) {
+        res.send({ error: 'Invalid Token' });
+    }
 });
 
 const PORT = 8080;
